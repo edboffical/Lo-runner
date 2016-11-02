@@ -17,6 +17,7 @@
  */
 
 #include "run.h"
+#include "proc.h"
 #include <sys/ptrace.h>
 #include <sys/resource.h>
 #include <sys/types.h>
@@ -30,10 +31,14 @@
 const char *last_run_err;
 #define RAISE_RUN(err) {last_run_err = err;return -1;}
 
+long memorytop;
+
 int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
     int status, incall = 0;
     struct rusage ru;
     struct user_regs_struct regs;
+    
+    rst->memory_used = get_proc_status(pid, "VmRSS:");
 
     while (1) {
         if (wait4(pid, &status, WSTOPPED, &ru) == -1)
@@ -49,7 +54,10 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
                     + ru.ru_utime.tv_usec / 1000
                     + ru.ru_stime.tv_sec * 1000
                     + ru.ru_stime.tv_usec / 1000;
-            rst->memory_used = ru.ru_maxrss;
+            memorytop = get_proc_status(pid, "VmPeak:");
+            if (memorytop > rst->memory_used)
+                rst->memory_used = memorytop;
+            //rst->memory_used = ru.ru_maxrss;
 
             switch (WSTOPSIG(status)) {
                 case SIGSEGV:
@@ -72,7 +80,10 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
                     + ru.ru_utime.tv_usec / 1000
                     + ru.ru_stime.tv_sec * 1000
                     + ru.ru_stime.tv_usec / 1000;
-            rst->memory_used = ru.ru_maxrss;
+            memorytop = get_proc_status(pid, "VmPeak:");
+            if (memorytop > rst->memory_used)
+                rst->memory_used = memorytop;
+            //rst->memory_used = ru.ru_maxrss;
             return 0;
         }
 
@@ -89,8 +100,11 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
                         + ru.ru_utime.tv_usec / 1000
                         + ru.ru_stime.tv_sec * 1000
                         + ru.ru_stime.tv_usec / 1000;
-                rst->memory_used = ru.ru_maxrss
-                        * (sysconf(_SC_PAGESIZE) / 1024);
+                memorytop = get_proc_status(pid, "VmPeak:");
+                if (memorytop > rst->memory_used)
+                    rst->memory_used = memorytop;
+                //rst->memory_used = ru.ru_maxrss
+                        //* (sysconf(_SC_PAGESIZE) / 1024);
 
                 rst->judge_result = RE;
                 if (ret == ACCESS_CALL_ERR) {
@@ -113,7 +127,10 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
             + ru.ru_utime.tv_usec / 1000
             + ru.ru_stime.tv_sec * 1000
             + ru.ru_stime.tv_usec / 1000;
-    rst->memory_used = ru.ru_maxrss;
+            memorytop = get_proc_status(pid, "VmPeak:");
+            if (memorytop > rst->memory_used)
+                rst->memory_used = memorytop;
+    //rst->memory_used = ru.ru_maxrss;
 
 
     if (rst->time_used > runobj->time_limit)
@@ -130,6 +147,8 @@ int waitExit(struct Runobj *runobj, struct Result *rst, pid_t pid) {
     int status;
     struct rusage ru;
 
+    rst->memory_used = get_proc_status(pid, "VmRSS:");
+
     if (wait4(pid, &status, 0, &ru) == -1)
         RAISE_RUN("wait4 failure");
 
@@ -137,7 +156,14 @@ int waitExit(struct Runobj *runobj, struct Result *rst, pid_t pid) {
             + ru.ru_utime.tv_usec / 1000
             + ru.ru_stime.tv_sec * 1000
             + ru.ru_stime.tv_usec / 1000;
-    rst->memory_used = ru.ru_maxrss;
+    //rst->memory_used = ru.ru_maxrss;
+    if (runobj->java == 1)
+        memorytop = get_page_fault_mem(ru, pid);
+    else
+        memorytop = get_proc_status(pid, "VmPeak:");
+
+    if (memorytop > rst->memory_used)
+        rst->memory_used = memorytop;
 
     if (WIFSIGNALED(status)) {
         switch (WTERMSIG(status)) {
@@ -175,7 +201,7 @@ int runit(struct Runobj *runobj, struct Result *rst) {
     if (pipe2(fd_err, O_NONBLOCK))
         RAISE1("run :pipe2(fd_err) failure");
 
-    pid = vfork();
+    pid = fork();
     if (pid < 0) {
         close(fd_err[0]);
         close(fd_err[1]);
@@ -228,6 +254,8 @@ int runit(struct Runobj *runobj, struct Result *rst) {
             RAISE(errbuffer);
             return -1;
         }
+
+        nice(19);
 
         if (runobj->trace)
             r = traceLoop(runobj, rst, pid);
