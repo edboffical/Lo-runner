@@ -43,7 +43,7 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
 
     while (1)
     {
-        if (wait4(pid, &status, WSTOPPED, &ru) == -1)
+        if (wait4(pid, &status, 0, &ru) == -1)
             RAISE_RUN("wait4 [WSTOPPED] failure");
 
         //Get memory
