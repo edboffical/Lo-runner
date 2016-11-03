@@ -1,6 +1,8 @@
 Loco program runner core
 ========================
 
+Fit on java (By SpringHack)
+
 We use this python-c library to run program in a sandbox-like environment.
 With it, we can accurately known the resource using of the program and 
 limit its resource using including system-call interrupt.
@@ -38,4 +40,16 @@ Here is a simple usage:
 runcfg['trace'] = True
 runcfg['calls'] = [1, 2, 3, 4] # system calls that could be used by testing programs
 runcfg['files'] = {'/etc/ld.so.cache': 0} # open flag permitted (value is the flags of open)
+```
+
+
+java
+----
+
+You can test java code using jvm, but while trace == true && java == true, it won't trace :D
+
+Here is a simple usage:
+
+```
+runcfg['java'] = True
 ```

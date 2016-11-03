@@ -55,12 +55,14 @@ int initRun(struct Runobj *runobj, PyObject *args)
     runobj->memory_limit = PyLong_AsLong(memory_obj);
 
     //Define java support
-    if((java_obj = PyDict_GetItemString(config, "java")) == NULL)
-        RAISE1("must supply is java or not");
-    if(java_obj == Py_True)
-        runobj->java = 1;
-    else
-        runobj->java = 0;
+    runobj->java = 0;
+    if((java_obj = PyDict_GetItemString(config, "java")) != NULL)
+        if(java_obj == Py_True)
+        {
+            runobj->java = 1;
+            if((fd_obj = PyDict_GetItemString(config, "fd_err")) == NULL)
+                RAISE1("must supply fd_err while using java");
+        }
         
     if((runner_obj = PyDict_GetItemString(config, "runner")) == NULL)
         runobj->runner = -1;

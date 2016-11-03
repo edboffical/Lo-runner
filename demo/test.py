@@ -17,9 +17,6 @@ RESULT_STR = [
 ]
 
 def compileSrc(src_path):
-    if os.system('gcc %s -o m'%src_path) != 0:
-        print('compile failure!')
-        return False
     return True
 
 def runone(p_path, in_path, out_path):
@@ -32,6 +29,7 @@ def runone(p_path, in_path, out_path):
         'fd_out':ftemp.fileno(),
         'timelimit':1000, #in MS
         'memorylimit':20000, #in KB
+        'java': False
     }
     
     rst = lorun.run(runcfg)

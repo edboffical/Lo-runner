@@ -31,80 +31,108 @@
 const char *last_run_err;
 #define RAISE_RUN(err) {last_run_err = err;return -1;}
 
-long memorytop;
-
 int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
+    long memory;
     int status, incall = 0;
     struct rusage ru;
     struct user_regs_struct regs;
     
     rst->memory_used = get_proc_status(pid, "VmRSS:");
 
-    while (1) {
+    rst->judge_result = AC;
+
+    while (1)
+    {
         if (wait4(pid, &status, WSTOPPED, &ru) == -1)
             RAISE_RUN("wait4 [WSTOPPED] failure");
 
+        //Get memory
+        if (runobj->java)
+            memory = get_page_fault_mem(ru, pid);
+        else
+            memory = get_proc_status(pid, "VmPeak:");
+        if (memory > rst->memory_used)
+            rst->memory_used = memory;
+
+        //Check mempry
+        if (rst->memory_used > runobj->memory_limit)
+        {
+            rst->judge_result = MLE;
+            ptrace(PTRACE_KILL, pid, NULL, NULL);
+            break;
+        }
+
+        //If exited 
         if (WIFEXITED(status))
             break;
-        else if (WSTOPSIG(status) != SIGTRAP) {
-            ptrace(PTRACE_KILL, pid, NULL, NULL);
-            waitpid(pid, NULL, 0);
-
-            rst->time_used = ru.ru_utime.tv_sec * 1000
-                    + ru.ru_utime.tv_usec / 1000
-                    + ru.ru_stime.tv_sec * 1000
-                    + ru.ru_stime.tv_usec / 1000;
-            memorytop = get_proc_status(pid, "VmPeak:");
-            if (memorytop > rst->memory_used)
-                rst->memory_used = memorytop;
-            //rst->memory_used = ru.ru_maxrss;
-
-            switch (WSTOPSIG(status)) {
-                case SIGSEGV:
-                    if (rst->memory_used > runobj->memory_limit)
-                        rst->judge_result = MLE;
-                    else
+    
+        //Get exitcode
+        int exitcode = WEXITSTATUS(status);
+        /**
+            exitcode == 5 waiting for next CPU allocation
+            ruby using system to run, exit 17 ok
+        **/
+        if (runobj->java || exitcode == 0x05 || exitcode == 0)
+            ;
+        else {
+            if (rst->judge_result == AC)
+            {
+                switch (exitcode)
+                {
+                    case SIGCHLD:
+                    case SIGALRM:
                         rst->judge_result = RE;
-                    break;
-                case SIGALRM:
-                case SIGXCPU:
-                    rst->judge_result = TLE;
-                    break;
-                default:
-                    rst->judge_result = RE;
-                    break;
+                    case SIGKILL:
+                    case SIGXCPU:
+                        rst->judge_result = TLE;
+                        break;
+                    case SIGXFSZ:
+                        rst->judge_result = OLE;
+                        break;
+                    default:
+                        rst->judge_result = RE;
+                }
+                rst->re_signum = WTERMSIG(status);
             }
+            ptrace(PTRACE_KILL, pid, NULL, NULL);
+            break;
+        }
 
-            rst->re_signum = WSTOPSIG(status);
-            rst->time_used = ru.ru_utime.tv_sec * 1000
-                    + ru.ru_utime.tv_usec / 1000
-                    + ru.ru_stime.tv_sec * 1000
-                    + ru.ru_stime.tv_usec / 1000;
-            memorytop = get_proc_status(pid, "VmPeak:");
-            if (memorytop > rst->memory_used)
-                rst->memory_used = memorytop;
-            //rst->memory_used = ru.ru_maxrss;
-            return 0;
+        /*  WIFSIGNALED: if the process is terminated by signal */
+        if (WIFSIGNALED(status))
+        {
+            int sig = WTERMSIG(status);
+            if (rst->judge_result == AC)
+            {
+                switch (sig)
+                {
+                    case SIGCHLD:
+                    case SIGALRM:
+                        rst->judge_result = RE;
+                    case SIGKILL:
+                    case SIGXCPU:
+                        rst->judge_result = TLE;
+                        break;
+                    case SIGXFSZ:
+                        rst->judge_result = OLE;
+                        break;
+                    default:
+                        rst->judge_result = RE;
+                }
+                rst->re_signum = WTERMSIG(status);
+            }
+            break;
         }
 
         if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1)
             RAISE_RUN("PTRACE_GETREGS failure");
-
-        if (incall) {
+        if (incall && runobj->trace && !runobj->java)
+        {
             int ret = checkAccess(runobj, pid, &regs);
-            if (ret != ACCESS_OK) {
+            if (ret != ACCESS_OK)
+            {
                 ptrace(PTRACE_KILL, pid, NULL, NULL);
                 waitpid(pid, NULL, 0);
-
-                rst->time_used = ru.ru_utime.tv_sec * 1000
-                        + ru.ru_utime.tv_usec / 1000
-                        + ru.ru_stime.tv_sec * 1000
-                        + ru.ru_stime.tv_usec / 1000;
-                memorytop = get_proc_status(pid, "VmPeak:");
-                if (memorytop > rst->memory_used)
-                    rst->memory_used = memorytop;
-                //rst->memory_used = ru.ru_maxrss
-                        //* (sysconf(_SC_PAGESIZE) / 1024);
 
                 rst->judge_result = RE;
                 if (ret == ACCESS_CALL_ERR) {
@@ -118,79 +146,9 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
             incall = 0;
         } else
             incall = 1;
-
         ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
+
     }
-    
-    
-    rst->time_used = ru.ru_utime.tv_sec * 1000
-            + ru.ru_utime.tv_usec / 1000
-            + ru.ru_stime.tv_sec * 1000
-            + ru.ru_stime.tv_usec / 1000;
-            memorytop = get_proc_status(pid, "VmPeak:");
-            if (memorytop > rst->memory_used)
-                rst->memory_used = memorytop;
-    //rst->memory_used = ru.ru_maxrss;
-
-
-    if (rst->time_used > runobj->time_limit)
-        rst->judge_result = TLE;
-    else if (rst->memory_used > runobj->memory_limit)
-        rst->judge_result = MLE;
-    else
-        rst->judge_result = AC;
-
-    return 0;
-}
-
-int waitExit(struct Runobj *runobj, struct Result *rst, pid_t pid) {
-    int status;
-    struct rusage ru;
-
-    rst->memory_used = get_proc_status(pid, "VmRSS:");
-
-    if (wait4(pid, &status, 0, &ru) == -1)
-        RAISE_RUN("wait4 failure");
-
-    rst->time_used = ru.ru_utime.tv_sec * 1000
-            + ru.ru_utime.tv_usec / 1000
-            + ru.ru_stime.tv_sec * 1000
-            + ru.ru_stime.tv_usec / 1000;
-    //rst->memory_used = ru.ru_maxrss;
-    if (runobj->java == 1)
-        memorytop = get_page_fault_mem(ru, pid);
-    else
-        memorytop = get_proc_status(pid, "VmPeak:");
-
-    if (memorytop > rst->memory_used)
-        rst->memory_used = memorytop;
-
-    if (WIFSIGNALED(status)) {
-        switch (WTERMSIG(status)) {
-            case SIGSEGV:
-                if (rst->memory_used > runobj->memory_limit)
-                    rst->judge_result = MLE;
-                else
-                    rst->judge_result = RE;
-                break;
-            case SIGALRM:
-            case SIGXCPU:
-                rst->judge_result = TLE;
-                break;
-            default:
-                rst->judge_result = RE;
-                break;
-        }
-        rst->re_signum = WTERMSIG(status);
-    } else {
-        if (rst->time_used > runobj->time_limit)
-            rst->judge_result = TLE;
-        else if (rst->memory_used > runobj->memory_limit)
-            rst->judge_result = MLE;
-        else
-            rst->judge_result = AC;
-    }
-
     return 0;
 }
 
@@ -255,12 +213,10 @@ int runit(struct Runobj *runobj, struct Result *rst) {
             return -1;
         }
 
-        nice(19);
+        //A hack to warning ...
+        r = nice(19);
 
-        if (runobj->trace)
-            r = traceLoop(runobj, rst, pid);
-        else
-            r = waitExit(runobj, rst, pid);
+        r = traceLoop(runobj, rst, pid);
 
         if (r)
             RAISE1(last_run_err);
