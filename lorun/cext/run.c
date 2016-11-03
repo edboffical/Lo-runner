@@ -1,7 +1,7 @@
 /**
  * Loco program runner core
- * Copyright (C) 2011  Lodevil(Du Jiong)
- *
+        Last modified: 2016-11-03 17:50:34
+        Filename: lorun/cext/run.c
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -149,6 +149,11 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
         ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
 
     }
+	//Don't forget this !!!
+	rst->time_used = ru.ru_utime.tv_sec * 1000
+        + ru.ru_utime.tv_usec / 1000
+        + ru.ru_stime.tv_sec * 1000
+        + ru.ru_stime.tv_usec / 1000;
     return 0;
 }
 
