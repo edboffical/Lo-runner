@@ -154,6 +154,10 @@ int traceLoop(struct Runobj *runobj, struct Result *rst, pid_t pid) {
         + ru.ru_utime.tv_usec / 1000
         + ru.ru_stime.tv_sec * 1000
         + ru.ru_stime.tv_usec / 1000;
+
+    //In case zombie process
+    waitpid(pid, NULL, 0);
+
     return 0;
 }
 
